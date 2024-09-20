@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socket.IO Audio Test</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+</head>
+<body>
+    <script>
+        // Connect to the Socket.IO server
+        const socket = io('http://localhost:8181', {
+            path: '/socket.io',
+            transports: ['websocket']
+        });
+
+        // Listen for the 'connect' event
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            // Join the room
+            socket.emit('join', { roomCode: 'cle-ydqu-zbw', username: 'user1' });
+        });
+
+        // Listen for the 'userJoined' event (broadcasted when a user joins)
+        socket.on('userJoined', (data) => {
+            console.log(`${data.username} has joined the room.`);
+        });
+
+        // Listen for the 'transcription' event (broadcasted when a transcription is received)
+        socket.on('transcription', (data) => {
+            console.log(`Received transcription from ${data.username}: ${data.transcription}`);
+        });
+
+        // Listen for the 'userLeft' event (broadcasted when a user leaves)
+        socket.on('userLeft', (data) => {
+            console.log(`${data.username} has left the room.`);
+        });
+
+        // Listen for the 'synthesizedAudio' event to play the audio
+        socket.on('synthesizedAudio', (data) => {
+            const audioBase64 = data.audio; // This is the Base64-encoded audio
+            const audioSrc = `data:audio/wav;base64,${audioBase64}`;
+            
+            // Create an audio element and play the audio
+            const audio = new Audio(audioSrc);
+            audio.play();
+
+            console.log(`Playing synthesized audio for ${data.username}`);
+        });
+
+        // Emit a transcription event for testing
+        function sendTranscription() {
+            const text = '¿Hola, cómo estás?';
+            socket.emit('transcription', { roomCode: 'cle-ydqu-zbw', username: 'user1', transcription: text, language: 'es-US' });
+        }
+    </script>
+
+    <button onclick="sendTranscription()">Send Transcription</button>
+</body>
+</html>
