@@ -5,6 +5,9 @@ from db import get_db_connection, pyodbc
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioDataStream, SpeechSynthesisOutputFormat, ResultReason
+import asyncio
+from collections import deque
+
 
 # Create FastAPI app
 app = FastAPI()
@@ -27,6 +30,10 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 # Initialize rooms dictionary
 rooms = {}
 current_speaker = {}
+
+# Initialize an audio synthesis queue and a playback state variable
+audio_queue = deque()
+is_synthesizing = False
 
 # Azure Speech Configurations
 speech_config = SpeechConfig(subscription="a446630e73514d779093ab5621f15304", region="eastus")
@@ -105,6 +112,7 @@ async def join(sid, data):
 # Event handler for receiving transcriptions and handling synthesized audio
 @sio.event
 async def transcription(sid, data):
+    global is_synthesizing
     room_code = data.get('roomCode')
     username = data.get('username')
     transcription = data.get('transcription')
@@ -114,11 +122,27 @@ async def transcription(sid, data):
         print('Room code is missing')
         return
 
+    # Add the synthesis request to the queue
+    audio_queue.append((username, transcription, room_code, language))
+    await process_audio_queue()
+
+async def process_audio_queue():
+    global is_synthesizing
+
+    if is_synthesizing or not audio_queue:
+        return  # Exit if audio is already being synthesized or the queue is empty
+
+    # Dequeue the next audio request
+    username, transcription, room_code, language = audio_queue.popleft()
+    is_synthesizing = True
+
     # Fetch the voice_code using the room_code (session_id)
     voice_code = get_voice_code_from_room_code(room_code)
 
     if not voice_code:
         print(f"Voice code not found for room {room_code}")
+        is_synthesizing = False
+        await process_audio_queue()  # Process the next item in the queue
         return
 
     # Synthesize speech and get Base64-encoded audio
@@ -127,14 +151,9 @@ async def transcription(sid, data):
     if base64_audio:
         await sio.emit('synthesizedAudio', {'username': username, 'audio': base64_audio}, room=room_code)
         print(f'Transcription from {username} in room {room_code} has been synthesized and broadcasted.')
-        
-# Add an event to unlock the mic when the client finishes playing the audio
-@sio.event
-async def audioPlaybackFinished(sid, data):
-    room_code = data.get('roomCode')
-    if current_speaker.get(room_code) == "synthesized_audio":
-        current_speaker.pop(room_code, None)
-        print(f"Synthesized audio finished playing in room {room_code}")
+
+    is_synthesizing = False
+    await process_audio_queue()  # Process the next item in the queue
 
 # When a client starts speaking
 @sio.event
