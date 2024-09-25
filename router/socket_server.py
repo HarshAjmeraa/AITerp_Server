@@ -124,13 +124,20 @@ async def transcription(sid, data):
 
     # Add the synthesis request to the queue
     audio_queue.append((username, transcription, room_code, language))
+    print(f"Added transcription request from {username} to queue. Current queue size: {len(audio_queue)}")
+    
+    # Process the queue
     await process_audio_queue()
 
 async def process_audio_queue():
     global is_synthesizing
 
-    if is_synthesizing or not audio_queue:
-        return  # Exit if audio is already being synthesized or the queue is empty
+    # Check if synthesis is already in progress
+    if is_synthesizing:
+        return  # Exit if audio is already being synthesized
+
+    if not audio_queue:
+        return  # Exit if the queue is empty
 
     # Dequeue the next audio request
     username, transcription, room_code, language = audio_queue.popleft()
@@ -152,6 +159,7 @@ async def process_audio_queue():
         await sio.emit('synthesizedAudio', {'username': username, 'audio': base64_audio}, room=room_code)
         print(f'Transcription from {username} in room {room_code} has been synthesized and broadcasted.')
 
+    # Reset the synthesizing flag and process the next item in the queue
     is_synthesizing = False
     await process_audio_queue()  # Process the next item in the queue
 
