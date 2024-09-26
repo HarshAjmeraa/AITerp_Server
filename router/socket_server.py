@@ -155,7 +155,7 @@ async def stopSpeaking(sid, data):
     if speaking_status[room_code] == sid:
         speaking_status[room_code] = None  # Unlock the microphone
         await sio.emit('micStatus', {'isSpeaking': False, 'speakerSid': None}, room=room_code)
-        print(f'Client {sid} stopped speaking in room {room_code}')e)
+        print(f'Client {sid} stopped speaking in room {room_code}')
 
 
 # Event handler for when a client leaves a room
