@@ -114,23 +114,25 @@ async def hold_mic(sid, data):
         print('Room code is missing')
         return
 
-    # Check if the room exists
-    if room_code not in rooms:
-        print(f'Room {room_code} does not exist.')
-        return
-
     # Check if someone is already holding the mic
     current_holder = mic_holders.get(room_code)
 
-    # Allow mic access if no one is holding it
     if current_holder is None:
+        # No one is holding the mic, allow this user
         mic_holders[room_code] = username
+        print(f"{username} is granted the mic in room {room_code}")
+
+        # Send event to the room to inform everyone who holds the mic
         await sio.emit('mic_granted', {'username': username}, room=room_code)
-        print(f'{username} is holding the mic in room {room_code}')
+    elif current_holder == username:
+        # User is already holding the mic, notify them again to unmute
+        print(f"{username} is already holding the mic in room {room_code}")
+        await sio.emit('mic_granted', {'username': username}, room=sid)  # Notify just the user holding the mic
     else:
-        # Deny mic access if someone else is holding it
+        # Someone else is holding the mic
+        print(f"{username} tried to hold the mic, but {current_holder} is holding it.")
         await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)
-        print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
+
 
 
 
@@ -145,13 +147,15 @@ async def release_mic(sid, data):
         return
 
     current_holder = mic_holders.get(room_code)
+    
     if current_holder == username:
         # User is holding the mic, release it
         mic_holders.pop(room_code, None)
+        print(f"{username} released the mic in room {room_code}")
         await sio.emit('micReleased', {'username': username}, room=room_code)
-        print(f'{username} released the mic in room {room_code}')
     else:
-        print(f'{username} tried to release the mic, but they are not holding it.')
+        print(f"{username} tried to release the mic, but they are not holding it.")
+
 
 
 # Event handler for receiving transcriptions and handling synthesized audio
