@@ -92,69 +92,49 @@ async def join(sid, data):
     if room_code not in rooms:
         rooms[room_code] = []
 
+    existing_client = next((client for client in rooms[room_code] if client['username'] == username), None)
+    if existing_client:
+        print(f'User {username} rejoined room {room_code}')
+        return
+
     rooms[room_code].append({'sid': sid, 'username': username})
     await sio.enter_room(sid, room_code)
     print(f'User {username} joined room {room_code}')
 
-    # Automatically grant mic if this is the only user in the room
-    if len(rooms[room_code]) == 1:
-        mic_holders[room_code] = username
-        await sio.emit('mic_granted', {'username': username}, room=room_code)
-        print(f'Mic automatically granted to {username} in room {room_code}')
-    
     await sio.emit('userJoined', {'username': username}, room=room_code)
 
-# Event handler when a client tries to hold the mic
+
+# Handle mic lock request
 @sio.event
-async def hold_mic(sid, data):
+async def micLockRequest(sid, data):
     room_code = data.get('roomCode')
     username = data.get('username')
 
-    if not room_code:
-        print('Room code is missing')
+    if not room_code or not username:
         return
 
-    # Check if someone is already holding the mic
-    current_holder = mic_holders.get(room_code)
-
-    if current_holder is None:
-        # No one is holding the mic, allow this user
-        mic_holders[room_code] = username
-        print(f"{username} is granted the mic in room {room_code}")
-
-        # Send event to the room to inform everyone who holds the mic
-        await sio.emit('mic_granted', {'username': username}, room=room_code)
-    elif current_holder == username:
-        # User is already holding the mic, notify them again to unmute
-        print(f"{username} is already holding the mic in room {room_code}")
-        await sio.emit('mic_granted', {'username': username}, room=sid)  # Notify just the user holding the mic
+    # Check if someone is already speaking in the room
+    if rooms.get(room_code) and 'current_speaker' in rooms[room_code]:
+        current_speaker = rooms[room_code]['current_speaker']
+        await sio.emit('micLocked', {'username': current_speaker}, room=sid)
     else:
-        # Someone else is holding the mic
-        print(f"{username} tried to hold the mic, but {current_holder} is holding it.")
-        await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)
+        # No one is speaking, lock the mic for this user
+        rooms[room_code]['current_speaker'] = username
+        await sio.emit('micLocked', {'username': username}, room=room_code)
 
-
-
-
-# Event handler when a client releases the mic
+# Handle mic unlock request
 @sio.event
-async def release_mic(sid, data):
+async def micUnlock(sid, data):
     room_code = data.get('roomCode')
     username = data.get('username')
 
-    if not room_code:
-        print('Room code is missing')
+    if not room_code or not username:
         return
 
-    current_holder = mic_holders.get(room_code)
-    
-    if current_holder == username:
-        # User is holding the mic, release it
-        mic_holders.pop(room_code, None)
-        print(f"{username} released the mic in room {room_code}")
-        await sio.emit('micReleased', {'username': username}, room=room_code)
-    else:
-        print(f"{username} tried to release the mic, but they are not holding it.")
+    if rooms.get(room_code) and rooms[room_code].get('current_speaker') == username:
+        # Unlock the mic for everyone
+        rooms[room_code]['current_speaker'] = None
+        await sio.emit('micUnlocked', room=room_code)
 
 
 
@@ -176,14 +156,16 @@ async def transcription(sid, data):
     if not voice_code:
         print(f"Voice code not found for room {room_code}")
         return
-
+    # Lock all microphones while the synthesized audio plays
+    await sio.emit('synthesizedAudioStart', room=room_code)
     # Synthesize speech and get Base64-encoded audio
     base64_audio = await synthesize_speech(transcription, voice_code, language)
 
     if base64_audio:
         await sio.emit('synthesizedAudio', {'username': username, 'audio': base64_audio}, room=room_code)
         print(f'Transcription from {username} in room {room_code} has been synthesized and broadcasted.')
-
+    # Unlock the microphones after the audio has played
+    await sio.emit('synthesizedAudioEnd', room=room_code)
 
 # Event handler for when a client leaves a room
 @sio.event
@@ -206,26 +188,17 @@ async def leave(sid, data):
 
     print(f'User {username} left room {room_code}')
 
+# Event handler when a client disconnects
 @sio.event
 async def disconnect(sid):
     print(f'Client disconnected: {sid}')
     for room_code, clients in list(rooms.items()):
-        # Check if the disconnecting client is the mic holder
+        rooms[room_code] = [client for client in clients if client['sid'] != sid]
+
         disconnected_client = next((client for client in clients if client['sid'] == sid), None)
         if disconnected_client:
-            username = disconnected_client['username']
-            current_holder = mic_holders.get(room_code)
+            await sio.emit('userLeft', {'username': disconnected_client['username']}, room=room_code)
 
-            if current_holder == username:
-                # Release the mic if the user was holding it
-                mic_holders.pop(room_code, None)
-                await sio.emit('micReleased', {'username': username}, room=room_code)
-                print(f'{username} was holding the mic and has disconnected. Mic released in room {room_code}.')
-
-            # Remove the user from the room
-            rooms[room_code] = [client for client in clients if client['sid'] != sid]
-            await sio.emit('userLeft', {'username': username}, room=room_code)
-
-            if not rooms[room_code]:
-                del rooms[room_code]
-                print(f'Room {room_code} is empty and has been deleted.')
+        if not rooms[room_code]:
+            del rooms[room_code]
+            print(f'Room {room_code} is empty and has been deleted.')
