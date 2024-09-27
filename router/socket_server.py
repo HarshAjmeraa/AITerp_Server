@@ -103,6 +103,7 @@ async def join(sid, data):
 
     await sio.emit('userJoined', {'username': username}, room=room_code)
 
+# Event handler when a client tries to hold the mic
 @sio.event
 async def hold_mic(sid, data):
     room_code = data.get('roomCode')
@@ -117,16 +118,16 @@ async def hold_mic(sid, data):
     if current_holder is None:
         # No one is holding the mic, allow this user to hold the mic
         mic_holders[room_code] = username
-        await sio.emit('micGranted', {'username': username}, room=room_code)
+        await sio.emit('mic_granted', {'username': username}, room=room_code)  # Changed to 'mic_granted'
         print(f'{username} is holding the mic in room {room_code}')
-    elif current_holder == username:
-        # The user already holds the mic, do nothing
-        print(f'{username} is already holding the mic in room {room_code}')
     else:
         # Someone else is holding the mic, deny the request
-        await sio.emit('micUnavailable', {'currentHolder': current_holder}, room=sid)
+        await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)  # Changed to 'mic_denied'
         print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
 
+
+
+# Event handler when a client releases the mic
 @sio.event
 async def release_mic(sid, data):
     room_code = data.get('roomCode')
