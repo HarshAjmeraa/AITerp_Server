@@ -92,15 +92,16 @@ async def join(sid, data):
     if room_code not in rooms:
         rooms[room_code] = []
 
-    existing_client = next((client for client in rooms[room_code] if client['username'] == username), None)
-    if existing_client:
-        print(f'User {username} rejoined room {room_code}')
-        return
-
     rooms[room_code].append({'sid': sid, 'username': username})
     await sio.enter_room(sid, room_code)
     print(f'User {username} joined room {room_code}')
 
+    # Automatically grant mic if this is the only user in the room
+    if len(rooms[room_code]) == 1:
+        mic_holders[room_code] = username
+        await sio.emit('mic_granted', {'username': username}, room=room_code)
+        print(f'Mic automatically granted to {username} in room {room_code}')
+    
     await sio.emit('userJoined', {'username': username}, room=room_code)
 
 # Event handler when a client tries to hold the mic
@@ -113,16 +114,22 @@ async def hold_mic(sid, data):
         print('Room code is missing')
         return
 
+    # Check if the room exists
+    if room_code not in rooms:
+        print(f'Room {room_code} does not exist.')
+        return
+
     # Check if someone is already holding the mic
     current_holder = mic_holders.get(room_code)
+
+    # Allow mic access if no one is holding it
     if current_holder is None:
-        # No one is holding the mic, allow this user to hold the mic
         mic_holders[room_code] = username
-        await sio.emit('mic_granted', {'username': username}, room=room_code)  # Changed to 'mic_granted'
+        await sio.emit('mic_granted', {'username': username}, room=room_code)
         print(f'{username} is holding the mic in room {room_code}')
     else:
-        # Someone else is holding the mic, deny the request
-        await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)  # Changed to 'mic_denied'
+        # Deny mic access if someone else is holding it
+        await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)
         print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
 
 
