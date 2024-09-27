@@ -103,7 +103,6 @@ async def join(sid, data):
 
     await sio.emit('userJoined', {'username': username}, room=room_code)
 
-# Event handler when a client tries to hold the mic
 @sio.event
 async def hold_mic(sid, data):
     room_code = data.get('roomCode')
@@ -116,16 +115,18 @@ async def hold_mic(sid, data):
     # Check if someone is already holding the mic
     current_holder = mic_holders.get(room_code)
     if current_holder is None:
-        # No one is holding the mic, allow this user
+        # No one is holding the mic, allow this user to hold the mic
         mic_holders[room_code] = username
         await sio.emit('micGranted', {'username': username}, room=room_code)
         print(f'{username} is holding the mic in room {room_code}')
+    elif current_holder == username:
+        # The user already holds the mic, do nothing
+        print(f'{username} is already holding the mic in room {room_code}')
     else:
-        # Someone else is holding the mic
+        # Someone else is holding the mic, deny the request
         await sio.emit('micUnavailable', {'currentHolder': current_holder}, room=sid)
         print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
 
-# Event handler when a client releases the mic
 @sio.event
 async def release_mic(sid, data):
     room_code = data.get('roomCode')
@@ -143,6 +144,7 @@ async def release_mic(sid, data):
         print(f'{username} released the mic in room {room_code}')
     else:
         print(f'{username} tried to release the mic, but they are not holding it.')
+
 
 # Event handler for receiving transcriptions and handling synthesized audio
 @sio.event
@@ -192,17 +194,26 @@ async def leave(sid, data):
 
     print(f'User {username} left room {room_code}')
 
-# Event handler when a client disconnects
 @sio.event
 async def disconnect(sid):
     print(f'Client disconnected: {sid}')
     for room_code, clients in list(rooms.items()):
-        rooms[room_code] = [client for client in clients if client['sid'] != sid]
-
+        # Check if the disconnecting client is the mic holder
         disconnected_client = next((client for client in clients if client['sid'] == sid), None)
         if disconnected_client:
-            await sio.emit('userLeft', {'username': disconnected_client['username']}, room=room_code)
+            username = disconnected_client['username']
+            current_holder = mic_holders.get(room_code)
 
-        if not rooms[room_code]:
-            del rooms[room_code]
-            print(f'Room {room_code} is empty and has been deleted.')
+            if current_holder == username:
+                # Release the mic if the user was holding it
+                mic_holders.pop(room_code, None)
+                await sio.emit('micReleased', {'username': username}, room=room_code)
+                print(f'{username} was holding the mic and has disconnected. Mic released in room {room_code}.')
+
+            # Remove the user from the room
+            rooms[room_code] = [client for client in clients if client['sid'] != sid]
+            await sio.emit('userLeft', {'username': username}, room=room_code)
+
+            if not rooms[room_code]:
+                del rooms[room_code]
+                print(f'Room {room_code} is empty and has been deleted.')
