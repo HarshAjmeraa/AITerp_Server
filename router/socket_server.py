@@ -26,10 +26,8 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 # Initialize rooms dictionary
 rooms = {}
-
-# Speech lock information for rooms
-speaking_status = {}
-
+# Track microphone holder for each room
+mic_holders = {}
 
 # Azure Speech Configurations
 speech_config = SpeechConfig(subscription="a446630e73514d779093ab5621f15304", region="eastus")
@@ -93,8 +91,6 @@ async def join(sid, data):
 
     if room_code not in rooms:
         rooms[room_code] = []
-        speaking_status[room_code] = {'isSpeaking': False, 'isSynthesizedAudioPlaying': False}
-
 
     existing_client = next((client for client in rooms[room_code] if client['username'] == username), None)
     if existing_client:
@@ -107,49 +103,74 @@ async def join(sid, data):
 
     await sio.emit('userJoined', {'username': username}, room=room_code)
 
-# Handle synthesized audio and prevent users from speaking during audio playback
+# Event handler when a client tries to hold the mic
+@sio.event
+async def hold_mic(sid, data):
+    room_code = data.get('roomCode')
+    username = data.get('username')
+
+    if not room_code:
+        print('Room code is missing')
+        return
+
+    # Check if someone is already holding the mic
+    current_holder = mic_holders.get(room_code)
+    if current_holder is None:
+        # No one is holding the mic, allow this user to hold the mic
+        mic_holders[room_code] = username
+        await sio.emit('mic_granted', {'username': username}, room=room_code)  # Changed to 'mic_granted'
+        print(f'{username} is holding the mic in room {room_code}')
+    else:
+        # Someone else is holding the mic, deny the request
+        await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)  # Changed to 'mic_denied'
+        print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
+
+
+
+# Event handler when a client releases the mic
+@sio.event
+async def release_mic(sid, data):
+    room_code = data.get('roomCode')
+    username = data.get('username')
+
+    if not room_code:
+        print('Room code is missing')
+        return
+
+    current_holder = mic_holders.get(room_code)
+    if current_holder == username:
+        # User is holding the mic, release it
+        mic_holders.pop(room_code, None)
+        await sio.emit('micReleased', {'username': username}, room=room_code)
+        print(f'{username} released the mic in room {room_code}')
+    else:
+        print(f'{username} tried to release the mic, but they are not holding it.')
+
+# Event handler for receiving transcriptions and handling synthesized audio
 @sio.event
 async def transcription(sid, data):
     room_code = data.get('roomCode')
+    username = data.get('username')
     transcription = data.get('transcription')
+    language = data.get('language', 'en-US')  
+
+    if not room_code:
+        print('Room code is missing')
+        return
+
+    # Fetch the voice_code using the room_code (session_id)
     voice_code = get_voice_code_from_room_code(room_code)
 
-    # Synthesize speech
-    base64_audio = await synthesize_speech(transcription, voice_code)
+    if not voice_code:
+        print(f"Voice code not found for room {room_code}")
+        return
+
+    # Synthesize speech and get Base64-encoded audio
+    base64_audio = await synthesize_speech(transcription, voice_code, language)
 
     if base64_audio:
-        # Lock microphones during audio playback
-        speaking_status[room_code]['isSynthesizedAudioPlaying'] = True
-        await sio.emit('lockMicrophone', {'isSpeaking': False, 'isSynthesizedAudioPlaying': True}, room=room_code)
-
-        # Send the synthesized audio to the room
-        await sio.emit('synthesizedAudio', {'audio': base64_audio}, room=room_code)
-
-        # Once audio has played, unlock microphones
-        speaking_status[room_code]['isSynthesizedAudioPlaying'] = False
-        await sio.emit('lockMicrophone', {'isSpeaking': False, 'isSynthesizedAudioPlaying': False}, room=room_code)
-
-# Handle when someone starts speaking
-@sio.event
-async def startSpeaking(sid, data):
-    room_code = data.get('roomCode')
-
-    if not room_code:
-        return
-
-    speaking_status[room_code]['isSpeaking'] = True
-    await sio.emit('lockMicrophone', {'isSpeaking': True, 'isSynthesizedAudioPlaying': False}, room=room_code)
-
-# Handle when someone stops speaking
-@sio.event
-async def stopSpeaking(sid, data):
-    room_code = data.get('roomCode')
-
-    if not room_code:
-        return
-
-    speaking_status[room_code]['isSpeaking'] = False
-    await sio.emit('lockMicrophone', {'isSpeaking': False, 'isSynthesizedAudioPlaying': False}, room=room_code)
+        await sio.emit('synthesizedAudio', {'username': username, 'audio': base64_audio}, room=room_code)
+        print(f'Transcription from {username} in room {room_code} has been synthesized and broadcasted.')
 
 
 # Event handler for when a client leaves a room
@@ -173,17 +194,26 @@ async def leave(sid, data):
 
     print(f'User {username} left room {room_code}')
 
-# Event handler when a client disconnects
 @sio.event
 async def disconnect(sid):
     print(f'Client disconnected: {sid}')
     for room_code, clients in list(rooms.items()):
-        rooms[room_code] = [client for client in clients if client['sid'] != sid]
-
+        # Check if the disconnecting client is the mic holder
         disconnected_client = next((client for client in clients if client['sid'] == sid), None)
         if disconnected_client:
-            await sio.emit('userLeft', {'username': disconnected_client['username']}, room=room_code)
+            username = disconnected_client['username']
+            current_holder = mic_holders.get(room_code)
 
-        if not rooms[room_code]:
-            del rooms[room_code]
-            print(f'Room {room_code} is empty and has been deleted.')
+            if current_holder == username:
+                # Release the mic if the user was holding it
+                mic_holders.pop(room_code, None)
+                await sio.emit('micReleased', {'username': username}, room=room_code)
+                print(f'{username} was holding the mic and has disconnected. Mic released in room {room_code}.')
+
+            # Remove the user from the room
+            rooms[room_code] = [client for client in clients if client['sid'] != sid]
+            await sio.emit('userLeft', {'username': username}, room=room_code)
+
+            if not rooms[room_code]:
+                del rooms[room_code]
+                print(f'Room {room_code} is empty and has been deleted.')
