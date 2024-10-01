@@ -157,7 +157,10 @@ async def transcription(sid, data):
     if not room_code:
         print('Room code is missing')
         return
-
+        
+    await sio.emit('transcription', {'username': username, 'transcription': transcription}, room=room_code)
+    print(f'Transcription from {username} in room {room_code}: {transcription}')
+    
     # Fetch the voice_code using the room_code (session_id)
     voice_code = get_voice_code_from_room_code(room_code)
 
