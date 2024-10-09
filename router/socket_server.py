@@ -116,16 +116,15 @@ async def hold_mic(sid, data):
     # Check if someone is already holding the mic
     current_holder = mic_holders.get(room_code)
     if current_holder is None:
-        # No one is holding the mic, allow this user
+        # No one is holding the mic, allow this user to hold the mic
         mic_holders[room_code] = username
-        await sio.emit('mic_granted', {'username': username}, room=room_code)  
-        await sio.emit('active_speaker', {'username': username}, room=room_code)  # Emit active speaker
+        await sio.emit('mic_granted', {'username': username}, room=room_code)
+        await sio.emit('active_speaker', {'username': username}, room=room_code)  # Emit active speaker event
         print(f'{username} is holding the mic in room {room_code}')
     else:
-        # Someone else is holding the mic
+        # Someone else is holding the mic, deny the request
         await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)
         print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
-
 
 # Event handler when a client releases the mic
 @sio.event
@@ -142,9 +141,10 @@ async def release_mic(sid, data):
         # User is holding the mic, release it
         mic_holders.pop(room_code, None)
         await sio.emit('micReleased', {'username': username}, room=room_code)
-        await sio.emit('active_speaker', {'username': None}, room=room_code)  # Clear active speaker
+        await sio.emit('active_speaker', {'username': ''}, room=room_code)  # Clear active speaker
         print(f'{username} released the mic in room {room_code}')
-
+    else:
+        print(f'{username} tried to release the mic, but they are not holding it.')
 
 # Event handler for receiving transcriptions and handling synthesized audio
 @sio.event
