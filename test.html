@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-Time Lip Sync Test</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body>
+  <h1>Real-Time Lip Sync Test</h1>
+
+  <div>
+    <label for="roomCode">Room Code:</label>
+    <input type="text" id="roomCode" placeholder="Enter Room Code" />
+    <label for="username">Username:</label>
+    <input type="text" id="username" placeholder="Enter Username" />
+    <button id="joinRoom">Join Room</button>
+  </div>
+
+  <div id="interaction" style="display: none;">
+    <h2>Room: <span id="room"></span></h2>
+    <textarea id="transcription" placeholder="Enter transcription"></textarea>
+    <button id="sendTranscription">Send Transcription</button>
+    <h3>Output:</h3>
+    <div id="output">
+      <p id="status"></p>
+      <video id="lipSyncVideo" controls style="display: none; width: 100%;"></video>
+    </div>
+  </div>
+
+  <script>
+    // const socket = io('https://aiterp-api-dev-ws-as.azurewebsites.net', {
+    const socket = io('http://localhost:8181', {
+    path: '/socket.io',
+    transports: ['websocket']
+});
+    const roomInput = document.getElementById('roomCode');
+    const usernameInput = document.getElementById('username');
+    const joinButton = document.getElementById('joinRoom');
+    const transcriptionInput = document.getElementById('transcription');
+    const sendButton = document.getElementById('sendTranscription');
+    const roomDisplay = document.getElementById('room');
+    const statusDisplay = document.getElementById('status');
+    const lipSyncVideo = document.getElementById('lipSyncVideo');
+    const interactionSection = document.getElementById('interaction');
+
+    let roomCode, username;
+
+    // Join room
+    joinButton.addEventListener('click', () => {
+      roomCode = roomInput.value;
+      username = usernameInput.value;
+
+      if (!roomCode || !username) {
+        alert('Please enter both room code and username.');
+        return;
+      }
+
+      socket.emit('join', { roomCode, username });
+      roomDisplay.textContent = roomCode;
+      interactionSection.style.display = 'block';
+    });
+
+    // Send transcription
+    sendButton.addEventListener('click', () => {
+      const transcription = transcriptionInput.value;
+      if (!transcription) {
+        alert('Please enter a transcription.');
+        return;
+      }
+
+      statusDisplay.textContent = 'Sending transcription...';
+      socket.emit('transcription', { roomCode, username, transcription });
+    });
+
+    // Receive transcription event
+    socket.on('transcription', (data) => {
+      console.log(`Transcription received: ${data.transcription}`);
+      statusDisplay.textContent = `Received transcription: "${data.transcription}"`;
+    });
+
+    // Receive lip-synced video
+    socket.on('lipSyncComplete', (data) => {
+      console.log('Lip-synced video received.');
+      const videoBlob = new Blob([Uint8Array.from(atob(data.video), c => c.charCodeAt(0))], { type: 'video/mp4' });
+      const videoURL = URL.createObjectURL(videoBlob);
+
+      lipSyncVideo.src = videoURL;
+      lipSyncVideo.style.display = 'block';
+      statusDisplay.textContent = 'Lip-synced video received!';
+    });
+
+    // Error handling
+    socket.on('error', (data) => {
+      console.error('Error received:', data.message);
+      statusDisplay.textContent = `Error: ${data.message}`;
+    });
+
+    // Connection success
+    socket.on('connect', () => {
+      console.log('Connected to server.');
+    });
+
+    // Connection loss
+    socket.on('disconnect', () => {
+      console.log('Disconnected from server.');
+      statusDisplay.textContent = 'Disconnected from server.';
+    });
+  </script>
+</body>
+</html>

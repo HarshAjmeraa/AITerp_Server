@@ -6,28 +6,47 @@ import string
 
 router = APIRouter()
 
-def generate_unique_session_id(cursor) -> str:
-    while True:
-        session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        cursor.execute("SELECT COUNT(*) FROM tbl_aiterp_Sessions WHERE session_id = ?", session_id)
-        count = cursor.fetchone()[0]
-        if count == 0:
-            return session_id
+# def generate_unique_session_id(cursor) -> str:
+#     while True:
+#         session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+#         cursor.execute("SELECT COUNT(*) FROM tbl_aiterp_Sessions WHERE session_id = ?", session_id)
+#         count = cursor.fetchone()[0]
+#         if count == 0:
+#             return session_id
 
-@router.post("/create_session")
-async def create_session(session_request: SessionRequest):
+# @router.post("/create_session")
+# async def create_session(session_request: SessionRequest):
+#     try:
+#         with get_db_connection() as conn:
+#             cursor = conn.cursor()
+#             session_id = generate_unique_session_id(cursor)
+
+#             query = """
+#                 INSERT INTO tbl_aiterp_Sessions (session_id, job_id, avatar_id)
+#                 VALUES (?, ?, ?)
+#             """
+#             cursor.execute(query, session_id, session_request.job_id, session_request.avatar_id)
+#             conn.commit()
+#             return {"session_id": session_id}
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
+
+@router.post("/add_session")
+async def add_session(session_request: SessionRequest):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            session_id = generate_unique_session_id(cursor)
 
+            # Insert the session data directly using the values from the request
             query = """
                 INSERT INTO tbl_aiterp_Sessions (session_id, job_id, avatar_id)
                 VALUES (?, ?, ?)
             """
-            cursor.execute(query, session_id, session_request.job_id, session_request.avatar_id)
+            cursor.execute(query, session_request.session_id, session_request.job_id, session_request.avatar_id)
             conn.commit()
-            return {"session_id": session_id}
+            
+            # Return the session ID as confirmation
+            return {"session_id": session_request.session_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 

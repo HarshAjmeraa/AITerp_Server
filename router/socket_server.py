@@ -1,10 +1,13 @@
 import io
 import base64
+import os
+from azure.storage.blob import BlobServiceClient
 import socketio
 from db import get_db_connection, pyodbc
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from azure.cognitiveservices.speech import SpeechConfig, SpeechSynthesizer, AudioDataStream, SpeechSynthesisOutputFormat, ResultReason
+from router.lip_sync import generate_lip_sync, load_model  
 
 # Create FastAPI app
 app = FastAPI()
@@ -50,6 +53,30 @@ async def synthesize_speech(text, voice_code=None, language="en-US"):
         print(f"Speech synthesis failed with reason: {result.reason}")
         return None
 
+lip_sync_model = None
+# Azure Blob Storage configuration
+BLOB_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=stmoliaihub774999322363;AccountKey=5zbHRn/VU9x4BlIz9ZH9ngZvGTyXjp0jB6pOXaLldGAMy1P4QTyRNP8g6/bC1gmN2xiCOQe+2Unm+AStUVApoA==;EndpointSuffix=core.windows.net"
+BLOB_CONTAINER_NAME = "lipsync-model"
+BLOB_MODEL_NAME = "wav2lip_gan.pth"
+
+LOCAL_MODEL_PATH = "Wav2Lip/checkpoints/wav2lip_gan.pth"
+
+def download_model_from_blob():
+    """Download Wav2Lip model from Azure Blob Storage if not already present locally."""
+    if not os.path.exists(LOCAL_MODEL_PATH):
+        print("Downloading Wav2Lip model from Azure Blob Storage...")
+        blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONNECTION_STRING)
+        blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER_NAME, blob=BLOB_MODEL_NAME)
+
+        os.makedirs(os.path.dirname(LOCAL_MODEL_PATH), exist_ok=True)
+        with open(LOCAL_MODEL_PATH, "wb") as model_file:
+            model_file.write(blob_client.download_blob().readall())
+        print("Model downloaded and saved locally.")
+    else:
+        print("Model already present locally.")
+
+
+
 
 def get_voice_code_from_room_code(room_code):
     try:
@@ -77,6 +104,7 @@ def get_voice_code_from_room_code(room_code):
 # Event handler when a new client connects
 @sio.event
 async def connect(sid, environ):
+    download_model_from_blob()
     print(f'New client connected: {sid}')
 
 # Event handler when a client joins a room
@@ -103,6 +131,7 @@ async def join(sid, data):
 
     await sio.emit('userJoined', {'username': username}, room=room_code)
 
+
 # Event handler when a client tries to hold the mic
 @sio.event
 async def hold_mic(sid, data):
@@ -125,6 +154,8 @@ async def hold_mic(sid, data):
         # Someone else is holding the mic, deny the request
         await sio.emit('mic_denied', {'currentHolder': current_holder}, room=sid)
         print(f'{username} tried to hold the mic, but {current_holder} is already holding it.')
+        
+    
 
 # Event handler when a client releases the mic
 @sio.event
@@ -145,8 +176,9 @@ async def release_mic(sid, data):
         print(f'{username} released the mic in room {room_code}')
     else:
         print(f'{username} tried to release the mic, but they are not holding it.')
+        
+    
 
-# Event handler for receiving transcriptions and handling synthesized audio
 @sio.event
 async def transcription(sid, data):
     room_code = data.get('roomCode')
@@ -157,7 +189,7 @@ async def transcription(sid, data):
     if not room_code:
         print('Room code is missing')
         return
-        
+
     await sio.emit('transcription', {'username': username, 'transcription': transcription}, room=room_code)
     print(f'Transcription from {username} in room {room_code}: {transcription}')
     
@@ -169,11 +201,34 @@ async def transcription(sid, data):
         return
 
     # Synthesize speech and get Base64-encoded audio
-    base64_audio = await synthesize_speech(transcription, voice_code, language)
+    synthesized_audio = await synthesize_speech(transcription, voice_code, language)
 
-    if base64_audio:
-        await sio.emit('synthesizedAudio', {'username': username, 'audio': base64_audio}, room=room_code)
-        print(f'Transcription from {username} in room {room_code} has been synthesized and broadcasted.')
+    if synthesized_audio:
+        # Decode Base64 audio to raw bytes
+        audio_data = base64.b64decode(synthesized_audio)
+
+        # Save synthesized audio to a temporary file
+        audio_path = f"static/output/{room_code}_synthesized.wav"
+        with open(audio_path, "wb") as f:
+            f.write(audio_data)
+
+        # Use a pre-recorded video for lip-sync
+        image_path = f"static/faces/es.jpg"
+        output_video_path = f"static/output/{room_code}_result.mp4"
+
+        # Generate lip-synced video
+        try:
+            generate_lip_sync(image_path, audio_path, LOCAL_MODEL_PATH, output_video_path)
+            with open(output_video_path, "rb") as f:
+                video_data = f.read()
+                base64_video = base64.b64encode(video_data).decode('utf-8')
+
+            await sio.emit('lipSyncComplete', {'username': username, 'video': base64_video}, room=room_code)
+            print(f"Lip-synced video generated for room {room_code} and sent to clients.")
+        except Exception as e:
+            print(f"Lip-sync generation failed: {e}")
+            await sio.emit('error', {'message': 'Failed to generate lip-synced video.'}, to=sid)
+
 
 
 # Event handler for when a client leaves a room

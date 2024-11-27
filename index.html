@@ -3,58 +3,184 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Socket.IO Audio Test</title>
-    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <title>Socket.IO Mic & Speech Test</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        button {
+            margin-top: 10px;
+            padding: 10px;
+        }
+
+        .log {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: scroll;
+        }
+
+        audio {
+            display: block;
+            margin-top: 10px;
+        }
+    </style>
 </head>
 <body>
+
+    <h1>Socket.IO Mic & Speech Test</h1>
+
+    <div class="section">
+        <label for="roomCode">Room Code:</label>
+        <input type="text" id="roomCode" value="room1">
+    </div>
+
+    <div class="section">
+        <label for="username">Username:</label>
+        <input type="text" id="username" value="user1">
+    </div>
+
+    <div class="section">
+        <button id="joinRoom">Join Room</button>
+        <button id="leaveRoom">Leave Room</button>
+    </div>
+
+    <div class="section">
+        <button id="holdMic">Hold Mic</button>
+        <button id="releaseMic">Release Mic</button>
+    </div>
+
+    <div class="section">
+        <label for="transcription">Transcription:</label>
+        <input type="text" id="transcription" placeholder="Enter text to synthesize...">
+        <button id="sendTranscription">Send Transcription</button>
+    </div>
+
+    <div id="micStatus" class="section">Mic Status: <span id="micStatusText">Available</span></div>
+    <div id="speakerStatus" class="section">Active Speaker: <span id="activeSpeaker">None</span></div>
+
+    <div class="log" id="log">Logs:</div>
+
     <script>
-        // Connect to the Socket.IO server
-        const socket = io('http://localhost:8181', {
-            path: '/socket.io',
-            transports: ['websocket']
-        });
+        // Select necessary DOM elements
+const socket = io('https://aiterp-api-dev-ws-as.azurewebsites.net', {
+    path: '/socket.io',
+    transports: ['websocket']
+});
+const logDiv = document.getElementById('log');
+const holdMicButton = document.getElementById('holdMic');
+const micStatusText = document.getElementById('micStatusText');
+const activeSpeaker = document.getElementById('activeSpeaker');
 
-        // Listen for the 'connect' event
-        socket.on('connect', () => {
-            console.log('Connected to server');
-            // Join the room
-            socket.emit('join', { roomCode: 'cle-ydqu-zbw', username: 'user1' });
-        });
+// Utility function to add logs to the page
+function addLog(message) {
+    const p = document.createElement('p');
+    p.textContent = message;
+    logDiv.appendChild(p);
+    logDiv.scrollTop = logDiv.scrollHeight;
+}
 
-        // Listen for the 'userJoined' event (broadcasted when a user joins)
+// Function to emit 'join' event
+document.getElementById('joinRoom').addEventListener('click', () => {
+    const roomCode = document.getElementById('roomCode').value;
+    const username = document.getElementById('username').value;
+
+    socket.emit('join', { roomCode, username });
+    addLog(`${username} joined room ${roomCode}`);
+});
+
+// Function to emit 'leave' event
+document.getElementById('leaveRoom').addEventListener('click', () => {
+    const roomCode = document.getElementById('roomCode').value;
+    const username = document.getElementById('username').value;
+
+    socket.emit('leave', { roomCode, username });
+    addLog(`${username} left room ${roomCode}`);
+});
+
+// Function to emit 'hold_mic' event
+document.getElementById('holdMic').addEventListener('click', () => {
+    const roomCode = document.getElementById('roomCode').value;
+    const username = document.getElementById('username').value;
+
+    socket.emit('hold_mic', { roomCode, username });
+    addLog(`Mic request sent by ${username}`);
+});
+
+// Function to emit 'release_mic' event
+document.getElementById('releaseMic').addEventListener('click', () => {
+    const roomCode = document.getElementById('roomCode').value;
+    const username = document.getElementById('username').value;
+
+    socket.emit('release_mic', { roomCode, username });
+    addLog(`${username} released the mic.`);
+    micStatusText.textContent = "Available";
+    holdMicButton.classList.remove('greyed');
+    holdMicButton.disabled = false;
+});
+
+// Listen for 'mic_granted' event
+socket.on('mic_granted', (data) => {
+    addLog(`Mic granted to ${data.username}`);
+    micStatusText.textContent = "Held by " + data.username;
+    if (data.username !== document.getElementById('username').value) {
+        holdMicButton.classList.add('greyed'); // Add gray color when another user holds the mic
+        holdMicButton.disabled = true;
+    }
+});
+
+// Listen for 'mic_denied' event
+socket.on('mic_denied', (data) => {
+    addLog(`Mic denied, currently held by ${data.currentHolder}`);
+    micStatusText.textContent = "Held by " + data.currentHolder;
+});
+
+// Listen for 'mic_available' event
+socket.on('mic_available', () => {
+    addLog("Mic is now available.");
+    micStatusText.textContent = "Available";
+    holdMicButton.classList.remove('greyed'); // Enable button color and availability
+    holdMicButton.disabled = false;
+});
+
+// Listen for 'mic_unavailable' event
+socket.on('mic_unavailable', (data) => {
+    addLog(`Mic is held by ${data.currentHolder}`);
+    micStatusText.textContent = "Held by " + data.currentHolder;
+    holdMicButton.classList.add('greyed'); // Apply gray color when unavailable
+    holdMicButton.disabled = true;
+});
+
+// Listen for 'active_speaker' event
+socket.on('active_speaker', (data) => {
+    activeSpeaker.textContent = data.username || 'None';
+    addLog(`Active speaker is now ${data.username || 'None'}`);
+});
+
+// Log any connection issues
+socket.on('connect_error', (error) => {
+    addLog(`Connection error: ${error}`);
+});
+
+
+        // Listen for users joining
         socket.on('userJoined', (data) => {
-            console.log(`${data.username} has joined the room.`);
+            addLog(`${data.username} joined the room.`);
         });
 
-        // Listen for the 'transcription' event (broadcasted when a transcription is received)
-        socket.on('transcription', (data) => {
-            console.log(`Received transcription from ${data.username}: ${data.transcription}`);
-        });
-
-        // Listen for the 'userLeft' event (broadcasted when a user leaves)
+        // Listen for users leaving
         socket.on('userLeft', (data) => {
-            console.log(`${data.username} has left the room.`);
+            addLog(`${data.username} left the room.`);
         });
-
-        // Listen for the 'synthesizedAudio' event to play the audio
-        socket.on('synthesizedAudio', (data) => {
-            const audioBase64 = data.audio; // This is the Base64-encoded audio
-            const audioSrc = `data:audio/wav;base64,${audioBase64}`;
-            
-            // Create an audio element and play the audio
-            const audio = new Audio(audioSrc);
-            audio.play();
-
-            console.log(`Playing synthesized audio for ${data.username}`);
-        });
-
-        // Emit a transcription event for testing
-        function sendTranscription() {
-            const text = '¿Hola, cómo estás?';
-            socket.emit('transcription', { roomCode: 'cle-ydqu-zbw', username: 'user1', transcription: text, language: 'es-US' });
-        }
     </script>
 
-    <button onclick="sendTranscription()">Send Transcription</button>
 </body>
 </html>
